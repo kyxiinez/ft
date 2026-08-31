@@ -39,7 +39,7 @@ function landmarkDistance(first, second) {
 
 function fingerIsExtended(landmarks, tip, pip) {
   const wrist = landmarks[0];
-  return landmarkDistance(landmarks[tip], wrist) > landmarkDistance(landmarks[pip], wrist) * 1.12;
+  return landmarkDistance(landmarks[tip], wrist) > landmarkDistance(landmarks[pip], wrist) * 1.05;
 }
 
 function isBlurGesture(landmarks) {
@@ -48,24 +48,40 @@ function isBlurGesture(landmarks) {
     middle: fingerIsExtended(landmarks, 12, 10),
     ring: fingerIsExtended(landmarks, 16, 14),
     pinky: fingerIsExtended(landmarks, 20, 18),
-    thumb: fingerIsExtended(landmarks, 4, 3),
   };
-  const raisedFingerCount = Object.values(extendedFingers).filter(Boolean).length;
-  // Peace sign: only index + middle finger extended (works for either hand,
-  // since handedness/label is not checked here).
-  return raisedFingerCount === 2 && extendedFingers.index && extendedFingers.middle;
+  // Peace sign: index + middle extended, ring + pinky folded.
+  // Thumb is deliberately ignored — its extension is unreliable to detect
+  // and shouldn't block the gesture from registering.
+  return extendedFingers.index && extendedFingers.middle && !extendedFingers.ring && !extendedFingers.pinky;
+}
+
+let gestureStreak = 0;
+let noGestureStreak = 0;
+const GESTURE_ON_FRAMES = 1; // trigger almost instantly
+const GESTURE_OFF_FRAMES = 5; // small hold so it doesn't flicker off between frames
+
+function evaluateGesture(gestureSeenThisFrame) {
+  if (gestureSeenThisFrame) {
+    gestureStreak += 1;
+    noGestureStreak = 0;
+    if (gestureStreak >= GESTURE_ON_FRAMES && !gestureBlur) setGestureBlur(true);
+  } else {
+    noGestureStreak += 1;
+    gestureStreak = 0;
+    if (noGestureStreak >= GESTURE_OFF_FRAMES && gestureBlur) setGestureBlur(false);
+  }
 }
 
 function setupHandDetection() {
   if (!window.Hands || !video) return;
   const hands = new window.Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
   // maxNumHands: 2 so the gesture is caught whether it's shown with the left or right hand,
-  // or even both at once.
-  hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .7, minTrackingConfidence: .7 });
+  // or even both at once. Lower confidence thresholds = faster, more sensitive detection.
+  hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .55, minTrackingConfidence: .5 });
   hands.onResults((results) => {
-    const hands = results.multiHandLandmarks || [];
-    const gestureDetected = hands.some((landmarks) => isBlurGesture(landmarks));
-    setGestureBlur(gestureDetected);
+    const detectedHands = results.multiHandLandmarks || [];
+    const gestureDetected = detectedHands.some((landmarks) => isBlurGesture(landmarks));
+    evaluateGesture(gestureDetected);
   });
   let isProcessing = false;
   const detect = async () => {
